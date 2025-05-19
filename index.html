@@ -35,34 +35,39 @@
 
         function countStats(data, 진료실) {
           const sub = 진료실 === "전체" ? data : data.filter(r => (r['진료과'] || '기타') === 진료실);
+          const 초진환자 = sub.filter(r => ["신환", "90일초진"].includes(r['초/재']));
+          const 초진차트 = [...new Set(초진환자.map(r => r['챠트번호']))];
 
-          const 초진환자 = [...new Set(sub.filter(r => ["신환", "90일초진"].includes(r['초/재'])).map(r => r['챠트번호']))];
           const 재진방문수 = sub.filter(r => 재진조건.includes(r['초/재'])).length;
           const 총방문수 = sub.length;
 
-          const 초진주사 = sub.filter(r => ["신환", "90일초진"].includes(r['초/재']) && (r['마취'] || '').includes('●'));
-          const 초진주사처방률 = 초진환자.length ? Math.round((초진주사.length / 초진환자.length) * 100) : 0;
+          const 초진주사 = 초진환자.filter(r => (r['마취'] || '').includes('●'));
+          const 초진주사처방률 = 초진차트.length ? Math.round((초진주사.length / 초진차트.length) * 100) : 0;
 
           const 주사차트 = [...new Set(초진주사.map(r => r['챠트번호']))];
           const 전체기록 = sub.filter(r => 주사차트.includes(r['챠트번호']));
 
-          const 내원횟수 = {};
+          const 주사횟수 = {};
+          const 내원횟수_주사 = {};
           전체기록.forEach(r => {
             const key = r['챠트번호'];
-            내원횟수[key] = (내원횟수[key] || 0) + 1;
+            if ((r['마취'] || '').includes('●')) {
+              주사횟수[key] = (주사횟수[key] || 0) + 1;
+            }
+            내원횟수_주사[key] = (내원횟수_주사[key] || 0) + 1;
           });
 
-          const 평균주사횟수 = 주사차트.length ? (전체기록.filter(r => (r['마취'] || '').includes('●')).length / 주사차트.length).toFixed(1) : 0;
-          const 평균내원주사 = 주사차트.length ? (Object.values(내원횟수).reduce((a, b) => a + b, 0) / 주사차트.length).toFixed(1) : 0;
+          const 평균주사횟수 = Object.keys(주사횟수).length ? (Object.values(주사횟수).reduce((a, b) => a + b, 0) / Object.keys(주사횟수).length).toFixed(1) : 0;
+          const 평균내원주사 = Object.keys(내원횟수_주사).length ? (Object.values(내원횟수_주사).reduce((a, b) => a + b, 0) / Object.keys(내원횟수_주사).length).toFixed(1) : 0;
 
-          const 초진기록 = sub.filter(r => ["신환", "90일초진"].includes(r['초/재']));
+          const 전체초진기록 = data.filter(r => 초진차트.includes(r['챠트번호']));
           const 초진내원 = {};
-          초진기록.forEach(r => {
+          전체초진기록.forEach(r => {
             const key = r['챠트번호'];
             초진내원[key] = (초진내원[key] || 0) + 1;
           });
-          const 초진평균내원 = Object.keys(초진내원).length ? (Object.values(초진내원).reduce((a, b) => a + b, 0) / Object.keys(초진내원).length).toFixed(1) : 0;
 
+          const 초진평균내원 = Object.keys(초진내원).length ? (Object.values(초진내원).reduce((a, b) => a + b, 0) / Object.keys(초진내원).length).toFixed(1) : 0;
           const 재내원수 = Object.values(초진내원).filter(n => n >= 2).length;
           const 초진재내원율 = Object.keys(초진내원).length ? Math.round((재내원수 / Object.keys(초진내원).length) * 100) : 0;
 
@@ -70,11 +75,11 @@
 
           return {
             "구분": 진료실,
-            "초진환자수": 초진환자.length,
+            "초진환자수": 초진차트.length,
             "재진환자수": 재진방문수,
             "총환자수": 총방문수,
             "초진 주사 처방률": `${초진주사처방률}%`,
-            "초진 주사환자 재진율": `${Math.round((Object.values(내원횟수).filter(v => v >= 2).length / 주사차트.length) * 100) || 0}%`,
+            "초진 주사환자 재진율": `${Math.round((Object.values(내원횟수_주사).filter(v => v >= 2).length / Object.keys(내원횟수_주사).length) * 100) || 0}%`,
             "초진주사환자 평균 주사횟수": 평균주사횟수,
             "초진 주사환자 평균내원횟수": 평균내원주사,
             "초진평균내원횟수": 초진평균내원,
@@ -83,13 +88,12 @@
             "2회 내원 비율": `${내원비율(2)}%`,
             "3회 내원 비율": `${내원비율(3)}%`,
             "4회 내원 비율": `${내원비율(4)}%`,
-            "5회 이상 내원 비율": `${Object.values(초진내원).filter(n => n >= 5).length / Object.keys(초진내원).length * 100 | 0}%`
+            "5회 이상 내원 비율": `${내원비율(5) + Object.values(초진내원).filter(n => n > 5).length / Object.keys(초진내원).length * 100 | 0}%`
           };
         }
 
         const 통계 = [countStats(df, "전체")].concat(진료실목록.map(j => countStats(df, j)));
 
-        // 출력
         const keys = Object.keys(통계[0]);
         let html = '<table><thead><tr>' + keys.map(k => `<th>${k}</th>`).join('') + '</tr></thead><tbody>';
         통계.forEach(row => {
