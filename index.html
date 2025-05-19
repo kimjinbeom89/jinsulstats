@@ -11,12 +11,14 @@
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
     th { background-color: #f4f4f4; }
     #result-table { display: none; }
+    .warn { color: red; font-weight: bold; margin-top: 10px; }
   </style>
 </head>
 <body>
   <h1>외래 통계 자동 계산기</h1>
   <input type="file" id="excelFile" accept=".xlsx" />
   <div id="output"></div>
+  <div id="warning" class="warn"></div>
 
   <script>
     document.getElementById('excelFile').addEventListener('change', function(e) {
@@ -30,32 +32,34 @@
           rawData = rawData.concat(sheetData);
         });
 
-        // ✅ 자동으로 열이름이 포함된 행 탐색 (예: 3~10행 중 적절한 행 추정)
-        let headerRowIndex = rawData.findIndex(row => {
-          return row.filter(cell => typeof cell === 'string' && cell.toString().trim().length > 0).length >= 4;
-        });
+        let headerRowIndex = rawData.findIndex(row => row.filter(cell => typeof cell === 'string' && cell.toString().trim().length > 0).length >= 4);
         const headers = rawData[headerRowIndex];
         const dataRows = rawData.slice(headerRowIndex + 1);
 
-        // 표준 객체 배열로 변환
         const df = dataRows.map(row => {
           let obj = {};
-          headers.forEach((col, i) => {
-            obj[col] = row[i];
-          });
+          headers.forEach((col, i) => { obj[col] = row[i]; });
           return obj;
         });
 
-        // ✅ 열 이름 자동 매핑
         const headerMap = {};
         const colNames = headers.map(c => c.toString());
         for (const name of colNames) {
           const lname = name.toLowerCase();
-          if (lname.includes("초") && lname.includes("재")) headerMap['초재'] = name;
-          else if (lname.includes("챠트") || lname.includes("차트")) headerMap['챠트번호'] = name;
+          if ((lname.includes("초") && lname.includes("재")) || lname.includes("방문유형")) headerMap['초재'] = name;
+          else if (lname.includes("챠트") || lname.includes("차트") || lname.includes("환자") || lname.includes("id")) headerMap['챠트번호'] = name;
           else if (lname.includes("접수") && lname.includes("일")) headerMap['접수일시'] = name;
           else if (lname.includes("마취")) headerMap['마취'] = name;
-          else if (lname.includes("진료") && lname.includes("과")) headerMap['진료과'] = name;
+          else if ((lname.includes("진료") && lname.includes("과")) || lname.includes("과목")) headerMap['진료과'] = name;
+        }
+
+        const 필수 = ['초재', '챠트번호', '마취', '진료과'];
+        const 누락 = 필수.filter(k => !headerMap[k]);
+        if (누락.length) {
+          document.getElementById('warning').innerText = `❗ 필수 열 누락: ${누락.join(', ')}\n열 이름을 확인하거나 매핑 조건을 수정하세요.`;
+          return;
+        } else {
+          document.getElementById('warning').innerText = '';
         }
 
         const 재진조건 = ["재진", "물리치료내원", "진찰료 산정안함"];
@@ -121,7 +125,6 @@
         }
 
         const 통계 = [countStats(df, "전체")].concat(진료실목록.map(j => countStats(df, j)));
-
         const keys = Object.keys(통계[0]);
         let html = '<table><thead><tr>' + keys.map(k => `<th>${k}</th>`).join('') + '</tr></thead><tbody>';
         통계.forEach(row => {
