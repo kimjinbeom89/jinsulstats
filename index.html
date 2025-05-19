@@ -24,34 +24,61 @@
       reader.onload = function(e) {
         const data = new Uint8Array(e.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
-        let df = [];
+        let rawData = [];
         workbook.SheetNames.forEach(sheet => {
-          const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { defval: "" });
-          df = df.concat(rows);
+          const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { header: 1, defval: "" });
+          rawData = rawData.concat(sheetData);
         });
 
-        const 진료실목록 = [...new Set(df.map(r => r['진료과'] || '기타'))];
+        // ✅ 자동으로 열이름이 포함된 행 탐색 (예: 3~10행 중 적절한 행 추정)
+        let headerRowIndex = rawData.findIndex(row => {
+          return row.filter(cell => typeof cell === 'string' && cell.toString().trim().length > 0).length >= 4;
+        });
+        const headers = rawData[headerRowIndex];
+        const dataRows = rawData.slice(headerRowIndex + 1);
+
+        // 표준 객체 배열로 변환
+        const df = dataRows.map(row => {
+          let obj = {};
+          headers.forEach((col, i) => {
+            obj[col] = row[i];
+          });
+          return obj;
+        });
+
+        // ✅ 열 이름 자동 매핑
+        const headerMap = {};
+        const colNames = headers.map(c => c.toString());
+        for (const name of colNames) {
+          const lname = name.toLowerCase();
+          if (lname.includes("초") && lname.includes("재")) headerMap['초재'] = name;
+          else if (lname.includes("챠트") || lname.includes("차트")) headerMap['챠트번호'] = name;
+          else if (lname.includes("접수") && lname.includes("일")) headerMap['접수일시'] = name;
+          else if (lname.includes("마취")) headerMap['마취'] = name;
+          else if (lname.includes("진료") && lname.includes("과")) headerMap['진료과'] = name;
+        }
+
         const 재진조건 = ["재진", "물리치료내원", "진찰료 산정안함"];
+        const 진료실목록 = [...new Set(df.map(r => r[headerMap['진료과']] || '기타'))];
 
         function countStats(data, 진료실) {
-          const sub = 진료실 === "전체" ? data : data.filter(r => (r['진료과'] || '기타') === 진료실);
-          const 초진환자 = sub.filter(r => ["신환", "90일초진"].includes(r['초/재']));
-          const 초진차트 = [...new Set(초진환자.map(r => r['챠트번호']))];
+          const sub = 진료실 === "전체" ? data : data.filter(r => (r[headerMap['진료과']] || '기타') === 진료실);
+          const 초진환자 = sub.filter(r => ["신환", "90일초진"].includes(r[headerMap['초재']]));
+          const 초진차트 = [...new Set(초진환자.map(r => r[headerMap['챠트번호']]))];
 
-          const 재진방문수 = sub.filter(r => 재진조건.includes(r['초/재'])).length;
+          const 재진방문수 = sub.filter(r => 재진조건.includes(r[headerMap['초재']])).length;
           const 총방문수 = sub.length;
 
-          const 초진주사 = 초진환자.filter(r => (r['마취'] || '').includes('●'));
+          const 초진주사 = 초진환자.filter(r => (r[headerMap['마취']] || '').includes('●'));
           const 초진주사처방률 = 초진차트.length ? Math.round((초진주사.length / 초진차트.length) * 100) : 0;
 
-          const 주사차트 = [...new Set(초진주사.map(r => r['챠트번호']))];
-          const 전체기록 = sub.filter(r => 주사차트.includes(r['챠트번호']));
+          const 주사차트 = [...new Set(초진주사.map(r => r[headerMap['챠트번호']]))];
+          const 주사기록 = sub.filter(r => 주사차트.includes(r[headerMap['챠트번호']]));
 
-          const 주사횟수 = {};
-          const 내원횟수_주사 = {};
-          전체기록.forEach(r => {
-            const key = r['챠트번호'];
-            if ((r['마취'] || '').includes('●')) {
+          const 주사횟수 = {}, 내원횟수_주사 = {};
+          주사기록.forEach(r => {
+            const key = r[headerMap['챠트번호']];
+            if ((r[headerMap['마취']] || '').includes('●')) {
               주사횟수[key] = (주사횟수[key] || 0) + 1;
             }
             내원횟수_주사[key] = (내원횟수_주사[key] || 0) + 1;
@@ -60,10 +87,10 @@
           const 평균주사횟수 = Object.keys(주사횟수).length ? (Object.values(주사횟수).reduce((a, b) => a + b, 0) / Object.keys(주사횟수).length).toFixed(1) : 0;
           const 평균내원주사 = Object.keys(내원횟수_주사).length ? (Object.values(내원횟수_주사).reduce((a, b) => a + b, 0) / Object.keys(내원횟수_주사).length).toFixed(1) : 0;
 
-          const 전체초진기록 = data.filter(r => 초진차트.includes(r['챠트번호']));
+          const 전체초진기록 = sub.filter(r => 초진차트.includes(r[headerMap['챠트번호']]));
           const 초진내원 = {};
           전체초진기록.forEach(r => {
-            const key = r['챠트번호'];
+            const key = r[headerMap['챠트번호']];
             초진내원[key] = (초진내원[key] || 0) + 1;
           });
 
@@ -71,7 +98,8 @@
           const 재내원수 = Object.values(초진내원).filter(n => n >= 2).length;
           const 초진재내원율 = Object.keys(초진내원).length ? Math.round((재내원수 / Object.keys(초진내원).length) * 100) : 0;
 
-          const 내원비율 = count => Math.round((Object.values(초진내원).filter(n => n === count).length / Object.keys(초진내원).length) * 100) || 0;
+          const 내원비율 = count => Math.round((Object.values(초진내원).filter(n => n === count).length / Object.keys(초진내원).length) * 100);
+          const 내원비율_5이상 = Math.round((Object.values(초진내원).filter(n => n >= 5).length / Object.keys(초진내원).length) * 100);
 
           return {
             "구분": 진료실,
@@ -88,7 +116,7 @@
             "2회 내원 비율": `${내원비율(2)}%`,
             "3회 내원 비율": `${내원비율(3)}%`,
             "4회 내원 비율": `${내원비율(4)}%`,
-            "5회 이상 내원 비율": `${내원비율(5) + Object.values(초진내원).filter(n => n > 5).length / Object.keys(초진내원).length * 100 | 0}%`
+            "5회 이상 내원 비율": `${내원비율_5이상}%`
           };
         }
 
