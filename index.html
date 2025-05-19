@@ -3,138 +3,163 @@
 <head>
   <meta charset="UTF-8">
   <title>외래 통계 자동 계산 도구</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; max-width: 1000px; margin: auto; }
     h1 { color: #2c3e50; }
-    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; overflow-x: auto; }
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
     th { background-color: #f4f4f4; }
-    #result-table { display: none; }
     .warn { color: red; font-weight: bold; margin-top: 10px; }
   </style>
 </head>
 <body>
   <h1>외래 통계 자동 계산기</h1>
-  <input type="file" id="excelFile" accept=".xlsx" />
+  <input type="file" id="fileInput" accept=".xlsx,.csv" />
   <div id="output"></div>
   <div id="warning" class="warn"></div>
 
   <script>
-    document.getElementById('excelFile').addEventListener('change', function(e) {
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+      const file = e.target.files[0];
       const reader = new FileReader();
+      const isCSV = file.name.endsWith('.csv');
+
       reader.onload = function(e) {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
         let rawData = [];
-        workbook.SheetNames.forEach(sheet => {
-          const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { header: 1, defval: "" });
-          rawData = rawData.concat(sheetData);
-        });
 
-        let headerRowIndex = rawData.findIndex(row => row.filter(cell => typeof cell === 'string' && cell.toString().trim().length > 0).length >= 4);
-        const headers = rawData[headerRowIndex];
-        const dataRows = rawData.slice(headerRowIndex + 1);
-
-        const df = dataRows.map(row => {
-          let obj = {};
-          headers.forEach((col, i) => { obj[col] = row[i]; });
-          return obj;
-        });
-
-        const headerMap = {};
-        const colNames = headers.map(c => c.toString());
-        for (const name of colNames) {
-          const lname = name.toLowerCase();
-          if ((lname.includes("초") && lname.includes("재")) || lname.includes("방문유형")) headerMap['초재'] = name;
-          else if (lname.includes("챠트") || lname.includes("차트") || lname.includes("환자") || lname.includes("id")) headerMap['챠트번호'] = name;
-          else if (lname.includes("접수") && lname.includes("일")) headerMap['접수일시'] = name;
-          else if (lname.includes("마취")) headerMap['마취'] = name;
-          else if ((lname.includes("진료") && lname.includes("과")) || lname.includes("과목")) headerMap['진료과'] = name;
-        }
-
-        const 필수 = ['초재', '챠트번호', '마취', '진료과'];
-        const 누락 = 필수.filter(k => !headerMap[k]);
-        if (누락.length) {
-          document.getElementById('warning').innerText = `❗ 필수 열 누락: ${누락.join(', ')}\n열 이름을 확인하거나 매핑 조건을 수정하세요.`;
-          return;
+        if (isCSV) {
+          const csv = e.target.result;
+          const rows = csv.split(/\r?\n/).map(row => row.split(','));
+          rawData = rows;
+          process(rawData);
         } else {
-          document.getElementById('warning').innerText = '';
-        }
-
-        const 재진조건 = ["재진", "물리치료내원", "진찰료 산정안함"];
-        const 진료실목록 = [...new Set(df.map(r => r[headerMap['진료과']] || '기타'))];
-
-        function countStats(data, 진료실) {
-          const sub = 진료실 === "전체" ? data : data.filter(r => (r[headerMap['진료과']] || '기타') === 진료실);
-          const 초진환자 = sub.filter(r => ["신환", "90일초진"].includes(r[headerMap['초재']]));
-          const 초진차트 = [...new Set(초진환자.map(r => r[headerMap['챠트번호']]))];
-
-          const 재진방문수 = sub.filter(r => 재진조건.includes(r[headerMap['초재']])).length;
-          const 총방문수 = sub.length;
-
-          const 초진주사 = 초진환자.filter(r => (r[headerMap['마취']] || '').includes('●'));
-          const 초진주사처방률 = 초진차트.length ? Math.round((초진주사.length / 초진차트.length) * 100) : 0;
-
-          const 주사차트 = [...new Set(초진주사.map(r => r[headerMap['챠트번호']]))];
-          const 주사기록 = sub.filter(r => 주사차트.includes(r[headerMap['챠트번호']]));
-
-          const 주사횟수 = {}, 내원횟수_주사 = {};
-          주사기록.forEach(r => {
-            const key = r[headerMap['챠트번호']];
-            if ((r[headerMap['마취']] || '').includes('●')) {
-              주사횟수[key] = (주사횟수[key] || 0) + 1;
-            }
-            내원횟수_주사[key] = (내원횟수_주사[key] || 0) + 1;
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          workbook.SheetNames.forEach(sheet => {
+            const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { header: 1, defval: "" });
+            rawData = rawData.concat(sheetData);
           });
-
-          const 평균주사횟수 = Object.keys(주사횟수).length ? (Object.values(주사횟수).reduce((a, b) => a + b, 0) / Object.keys(주사횟수).length).toFixed(1) : 0;
-          const 평균내원주사 = Object.keys(내원횟수_주사).length ? (Object.values(내원횟수_주사).reduce((a, b) => a + b, 0) / Object.keys(내원횟수_주사).length).toFixed(1) : 0;
-
-          const 전체초진기록 = sub.filter(r => 초진차트.includes(r[headerMap['챠트번호']]));
-          const 초진내원 = {};
-          전체초진기록.forEach(r => {
-            const key = r[headerMap['챠트번호']];
-            초진내원[key] = (초진내원[key] || 0) + 1;
-          });
-
-          const 초진평균내원 = Object.keys(초진내원).length ? (Object.values(초진내원).reduce((a, b) => a + b, 0) / Object.keys(초진내원).length).toFixed(1) : 0;
-          const 재내원수 = Object.values(초진내원).filter(n => n >= 2).length;
-          const 초진재내원율 = Object.keys(초진내원).length ? Math.round((재내원수 / Object.keys(초진내원).length) * 100) : 0;
-
-          const 내원비율 = count => Math.round((Object.values(초진내원).filter(n => n === count).length / Object.keys(초진내원).length) * 100);
-          const 내원비율_5이상 = Math.round((Object.values(초진내원).filter(n => n >= 5).length / Object.keys(초진내원).length) * 100);
-
-          return {
-            "구분": 진료실,
-            "초진환자수": 초진차트.length,
-            "재진환자수": 재진방문수,
-            "총환자수": 총방문수,
-            "초진 주사 처방률": `${초진주사처방률}%`,
-            "초진 주사환자 재진율": `${Math.round((Object.values(내원횟수_주사).filter(v => v >= 2).length / Object.keys(내원횟수_주사).length) * 100) || 0}%`,
-            "초진주사환자 평균 주사횟수": 평균주사횟수,
-            "초진 주사환자 평균내원횟수": 평균내원주사,
-            "초진평균내원횟수": 초진평균내원,
-            "초진 재내원율": `${초진재내원율}%`,
-            "1회 내원 비율": `${내원비율(1)}%`,
-            "2회 내원 비율": `${내원비율(2)}%`,
-            "3회 내원 비율": `${내원비율(3)}%`,
-            "4회 내원 비율": `${내원비율(4)}%`,
-            "5회 이상 내원 비율": `${내원비율_5이상}%`
-          };
+          process(rawData);
         }
-
-        const 통계 = [countStats(df, "전체")].concat(진료실목록.map(j => countStats(df, j)));
-        const keys = Object.keys(통계[0]);
-        let html = '<table><thead><tr>' + keys.map(k => `<th>${k}</th>`).join('') + '</tr></thead><tbody>';
-        통계.forEach(row => {
-          html += '<tr>' + keys.map(k => `<td>${row[k]}</td>`).join('') + '</tr>';
-        });
-        html += '</tbody></table>';
-        document.getElementById('output').innerHTML = html;
       };
-      reader.readAsArrayBuffer(e.target.files[0]);
+
+      if (isCSV) {
+        reader.readAsText(file);
+      } else {
+        reader.readAsArrayBuffer(file);
+      }
     });
+
+    function process(rawData) {
+      const headerRowIndex = rawData.findIndex(row =>
+        row.filter(cell => typeof cell === 'string' && cell.trim().length > 0).length >= 4
+      );
+      if (headerRowIndex === -1) {
+        document.getElementById('warning').innerText = '❗ 유효한 열 이름을 찾을 수 없습니다.';
+        return;
+      }
+
+      const headers = rawData[headerRowIndex].map(h => h.toString().trim());
+      const dataRows = rawData.slice(headerRowIndex + 1).filter(r => r.length > 1);
+
+      const df = dataRows.map(row => {
+        let obj = {};
+        headers.forEach((col, i) => { obj[col] = row[i] || ""; });
+        return obj;
+      });
+
+      const headerMap = {};
+      headers.forEach(h => {
+        const lname = h.toLowerCase();
+        if ((lname.includes("초") && lname.includes("재")) || lname.includes("방문유형")) headerMap['초재'] = h;
+        else if (lname.includes("차트") || lname.includes("챠트") || lname.includes("환자") || lname.includes("id")) headerMap['챠트번호'] = h;
+        else if (lname.includes("접수") && lname.includes("일")) headerMap['접수일시'] = h;
+        else if (lname.includes("마취")) headerMap['마취'] = h;
+        else if ((lname.includes("진료") && lname.includes("과")) || lname.includes("과목")) headerMap['진료과'] = h;
+      });
+
+      const 필수 = ['초재', '챠트번호', '마취', '진료과'];
+      const 누락 = 필수.filter(k => !headerMap[k]);
+      if (누락.length) {
+        document.getElementById('warning').innerText = `❗ 필수 열 누락: ${누락.join(', ')}\n열 이름을 확인해주세요.`;
+        return;
+      } else {
+        document.getElementById('warning').innerText = '';
+      }
+
+      const 재진조건 = ["재진", "물리치료내원", "진찰료 산정안함"];
+      const 진료실목록 = [...new Set(df.map(r => r[headerMap['진료과']] || '기타'))];
+
+      function countStats(data, 진료실) {
+        const sub = 진료실 === "전체" ? data : data.filter(r => (r[headerMap['진료과']] || '기타') === 진료실);
+        const 초진환자 = sub.filter(r => ["신환", "90일초진"].includes(r[headerMap['초재']]));
+        const 초진차트 = [...new Set(초진환자.map(r => r[headerMap['챠트번호']]))];
+
+        const 재진방문수 = sub.filter(r => 재진조건.includes(r[headerMap['초재']])).length;
+        const 총방문수 = sub.length;
+
+        const 초진주사 = 초진환자.filter(r => (r[headerMap['마취']] || '').includes('●'));
+        const 초진주사처방률 = 초진차트.length ? Math.round((초진주사.length / 초진차트.length) * 100) : 0;
+
+        const 주사차트 = [...new Set(초진주사.map(r => r[headerMap['챠트번호']]))];
+        const 주사기록 = sub.filter(r => 주사차트.includes(r[headerMap['챠트번호']]));
+
+        const 주사횟수 = {}, 내원횟수_주사 = {};
+        주사기록.forEach(r => {
+          const key = r[headerMap['챠트번호']];
+          if ((r[headerMap['마취']] || '').includes('●')) {
+            주사횟수[key] = (주사횟수[key] || 0) + 1;
+          }
+          내원횟수_주사[key] = (내원횟수_주사[key] || 0) + 1;
+        });
+
+        const 평균주사횟수 = Object.keys(주사횟수).length ? (Object.values(주사횟수).reduce((a, b) => a + b, 0) / Object.keys(주사횟수).length).toFixed(1) : 0;
+        const 평균내원주사 = Object.keys(내원횟수_주사).length ? (Object.values(내원횟수_주사).reduce((a, b) => a + b, 0) / Object.keys(내원횟수_주사).length).toFixed(1) : 0;
+
+        const 전체초진기록 = sub.filter(r => 초진차트.includes(r[headerMap['챠트번호']]));
+        const 초진내원 = {};
+        전체초진기록.forEach(r => {
+          const key = r[headerMap['챠트번호']];
+          초진내원[key] = (초진내원[key] || 0) + 1;
+        });
+
+        const 초진평균내원 = Object.keys(초진내원).length ? (Object.values(초진내원).reduce((a, b) => a + b, 0) / Object.keys(초진내원).length).toFixed(1) : 0;
+        const 재내원수 = Object.values(초진내원).filter(n => n >= 2).length;
+        const 초진재내원율 = Object.keys(초진내원).length ? Math.round((재내원수 / Object.keys(초진내원).length) * 100) : 0;
+
+        const 내원비율 = count => Math.round((Object.values(초진내원).filter(n => n === count).length / Object.keys(초진내원).length) * 100);
+        const 내원비율_5이상 = Math.round((Object.values(초진내원).filter(n => n >= 5).length / Object.keys(초진내원).length) * 100);
+
+        return {
+          "구분": 진료실,
+          "초진환자수": 초진차트.length,
+          "재진환자수": 재진방문수,
+          "총환자수": 총방문수,
+          "초진 주사 처방률": `${초진주사처방률}%`,
+          "초진 주사환자 재진율": `${Math.round((Object.values(내원횟수_주사).filter(v => v >= 2).length / Object.keys(내원횟수_주사).length) * 100) || 0}%`,
+          "초진주사환자 평균 주사횟수": 평균주사횟수,
+          "초진 주사환자 평균내원횟수": 평균내원주사,
+          "초진평균내원횟수": 초진평균내원,
+          "초진 재내원율": `${초진재내원율}%`,
+          "1회 내원 비율": `${내원비율(1)}%`,
+          "2회 내원 비율": `${내원비율(2)}%`,
+          "3회 내원 비율": `${내원비율(3)}%`,
+          "4회 내원 비율": `${내원비율(4)}%`,
+          "5회 이상 내원 비율": `${내원비율_5이상}%`
+        };
+      }
+
+      const 통계 = [countStats(df, "전체")].concat(진료실목록.map(j => countStats(df, j)));
+      const keys = Object.keys(통계[0]);
+      let html = '<table><thead><tr>' + keys.map(k => `<th>${k}</th>`).join('') + '</tr></thead><tbody>';
+      통계.forEach(row => {
+        html += '<tr>' + keys.map(k => `<td>${row[k]}</td>`).join('') + '</tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById('output').innerHTML = html;
+    }
   </script>
 </body>
 </html>
