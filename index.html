@@ -12,10 +12,17 @@
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
     th { background-color: #f4f4f4; }
     .warn { color: red; font-weight: bold; margin-top: 10px; }
+    .input-section { margin: 20px 0; }
   </style>
 </head>
 <body>
   <h1>외래 통계 자동 계산기</h1>
+  
+  <div class="input-section">
+    <label>✔️ 특정 키워드(예: PT만)를 입력하세요:</label><br>
+    <input type="text" id="keywordInput" placeholder="예: PT만" style="width: 200px; margin-top: 5px;" />
+  </div>
+
   <input type="file" id="fileInput" accept=".xlsx,.csv" />
   <div id="output"></div>
   <div id="warning" class="warn"></div>
@@ -23,6 +30,7 @@
   <script>
     document.getElementById('fileInput').addEventListener('change', function(e) {
       const file = e.target.files[0];
+      const keyword = document.getElementById('keywordInput').value.trim().toLowerCase();
       const reader = new FileReader();
       const isCSV = file.name.endsWith('.csv');
 
@@ -33,7 +41,7 @@
           const csv = e.target.result;
           const rows = csv.split(/\r?\n/).map(row => row.split(','));
           rawData = rows;
-          process(rawData);
+          process(rawData, keyword);
         } else {
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
@@ -41,18 +49,15 @@
             const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { header: 1, defval: "" });
             rawData = rawData.concat(sheetData);
           });
-          process(rawData);
+          process(rawData, keyword);
         }
       };
 
-      if (isCSV) {
-        reader.readAsText(file);
-      } else {
-        reader.readAsArrayBuffer(file);
-      }
+      if (isCSV) reader.readAsText(file);
+      else reader.readAsArrayBuffer(file);
     });
 
-    function process(rawData) {
+    function process(rawData, keyword) {
       const headerRowIndex = rawData.findIndex(row =>
         row.filter(cell => typeof cell === 'string' && cell.trim().length > 0).length >= 4
       );
@@ -78,6 +83,7 @@
         else if (lname.includes("접수") && lname.includes("일")) headerMap['접수일시'] = h;
         else if (lname.includes("마취")) headerMap['마취'] = h;
         else if ((lname.includes("진료") && lname.includes("과")) || lname.includes("과목")) headerMap['진료과'] = h;
+        else if (lname.includes("메모")) headerMap['접수메모'] = h;
       });
 
       const 필수 = ['초재', '챠트번호', '마취', '진료과'];
@@ -132,6 +138,10 @@
         const 내원비율 = count => Math.round((Object.values(초진내원).filter(n => n === count).length / Object.keys(초진내원).length) * 100);
         const 내원비율_5이상 = Math.round((Object.values(초진내원).filter(n => n >= 5).length / Object.keys(초진내원).length) * 100);
 
+        const 메모갯수 = headerMap['접수메모'] && keyword
+          ? sub.filter(r => (r[headerMap['접수메모']] || "").toLowerCase().includes(keyword)).length
+          : "";
+
         return {
           "구분": 진료실,
           "초진환자수": 초진차트.length,
@@ -147,7 +157,8 @@
           "2회 내원 비율": `${내원비율(2)}%`,
           "3회 내원 비율": `${내원비율(3)}%`,
           "4회 내원 비율": `${내원비율(4)}%`,
-          "5회 이상 내원 비율": `${내원비율_5이상}%`
+          "5회 이상 내원 비율": `${내원비율_5이상}%`,
+          "특정 키워드 포함 메모 수": 메모갯수
         };
       }
 
