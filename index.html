@@ -17,7 +17,7 @@
 </head>
 <body>
   <h1>외래 통계 자동 계산기</h1>
-  
+
   <div class="input-section">
     <label>✔️ 특정 키워드(예: PT만)를 입력하세요:</label><br>
     <input type="text" id="keywordInput" placeholder="예: PT만" style="width: 200px; margin-top: 5px;" />
@@ -58,9 +58,10 @@
     });
 
     function process(rawData, keyword) {
-      const headerRowIndex = rawData.findIndex(row =>
-        row.filter(cell => typeof cell === 'string' && cell.trim().length > 0).length >= 4
+      const headerRowIndex = rawData.findIndex(
+        row => row.join('').includes("초/재") || row.join('').includes("챠트번호") || row.join('').includes("진료과") || row.join('').includes("마취")
       );
+
       if (headerRowIndex === -1) {
         document.getElementById('warning').innerText = '❗ 유효한 열 이름을 찾을 수 없습니다.';
         return;
@@ -68,7 +69,6 @@
 
       const headers = rawData[headerRowIndex].map(h => h.toString().trim());
       const dataRows = rawData.slice(headerRowIndex + 1).filter(r => r.length > 1);
-
       const df = dataRows.map(row => {
         let obj = {};
         headers.forEach((col, i) => { obj[col] = row[i] || ""; });
@@ -78,9 +78,8 @@
       const headerMap = {};
       headers.forEach(h => {
         const lname = h.toLowerCase();
-        if ((lname.includes("초") && lname.includes("재")) || lname.includes("방문유형")) headerMap['초재'] = h;
+        if (lname.includes("초") && lname.includes("재")) headerMap['초재'] = h;
         else if (lname.includes("차트") || lname.includes("챠트") || lname.includes("환자") || lname.includes("id")) headerMap['챠트번호'] = h;
-        else if (lname.includes("접수") && lname.includes("일")) headerMap['접수일시'] = h;
         else if (lname.includes("마취")) headerMap['마취'] = h;
         else if ((lname.includes("진료") && lname.includes("과")) || lname.includes("과목")) headerMap['진료과'] = h;
         else if (lname.includes("메모")) headerMap['접수메모'] = h;
@@ -89,10 +88,8 @@
       const 필수 = ['초재', '챠트번호', '마취', '진료과'];
       const 누락 = 필수.filter(k => !headerMap[k]);
       if (누락.length) {
-        document.getElementById('warning').innerText = `❗ 필수 열 누락: ${누락.join(', ')}\n열 이름을 확인해주세요.`;
+        document.getElementById('warning').innerText = `❗ 필수 열 누락: ${누락.join(', ')}`;
         return;
-      } else {
-        document.getElementById('warning').innerText = '';
       }
 
       const 재진조건 = ["재진", "물리치료내원", "진찰료 산정안함"];
@@ -102,7 +99,6 @@
         const sub = 진료실 === "전체" ? data : data.filter(r => (r[headerMap['진료과']] || '기타') === 진료실);
         const 초진환자 = sub.filter(r => ["신환", "90일초진"].includes(r[headerMap['초재']]));
         const 초진차트 = [...new Set(초진환자.map(r => r[headerMap['챠트번호']]))];
-
         const 재진방문수 = sub.filter(r => 재진조건.includes(r[headerMap['초재']])).length;
         const 총방문수 = sub.length;
 
