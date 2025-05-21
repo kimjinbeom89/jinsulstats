@@ -103,6 +103,7 @@
         const 총방문수 = sub.length;
 
         const 초진주사 = 초진환자.filter(r => (r[headerMap['마취']] || '').includes('●'));
+        const 초진주사갯수 = 초진주사.length;
         const 초진주사처방률 = 초진차트.length ? Math.round((초진주사.length / 초진차트.length) * 100) : 0;
 
         const 주사차트 = [...new Set(초진주사.map(r => r[headerMap['챠트번호']]))];
@@ -144,6 +145,7 @@
           "재진환자수": 재진방문수,
           "총환자수": 총방문수,
           "초진 주사 처방률": `${초진주사처방률}%`,
+          "초진주사 갯수": 초진주사갯수,
           "초진 주사환자 재진율": `${Math.round((Object.values(내원횟수_주사).filter(v => v >= 2).length / Object.keys(내원횟수_주사).length) * 100) || 0}%`,
           "초진주사환자 평균 주사횟수": 평균주사횟수,
           "초진 주사환자 평균내원횟수": 평균내원주사,
