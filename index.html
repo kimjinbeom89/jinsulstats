@@ -1,173 +1,140 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <title>외래 통계 자동 계산 도구</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <title>진료 통계 분석기</title>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; max-width: 1000px; margin: auto; }
-    h1 { color: #2c3e50; }
-    table { border-collapse: collapse; width: 100%; margin-top: 20px; overflow-x: auto; }
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    h1 { color: #333; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
-    th { background-color: #f4f4f4; }
-    .warn { color: red; font-weight: bold; margin-top: 10px; }
-    .input-section { margin: 20px 0; }
+    th { background-color: #f0f0f0; }
+    input[type="file"], input[type="text"] { margin-top: 10px; }
   </style>
 </head>
 <body>
-  <h1>외래 통계 자동 계산기</h1>
-
-  <div class="input-section">
-    <label>✔️ 특정 키워드(예: PT만)를 입력하세요:</label><br>
-    <input type="text" id="keywordInput" placeholder="예: PT만" style="width: 200px; margin-top: 5px;" />
-  </div>
-
+  <h1>진료 통계 분석기 (2025.5.19)</h1>
   <input type="file" id="fileInput" accept=".xlsx,.csv" />
+  <br />
+  <label>접수메모 키워드 (완전일치, 대소문자 무시):</label>
+  <input type="text" id="keywordInput" placeholder="예: pt만" />
+  <button onclick="processFile()">분석 실행</button>
   <div id="output"></div>
-  <div id="warning" class="warn"></div>
 
   <script>
-    document.getElementById('fileInput').addEventListener('change', function(e) {
-      const file = e.target.files[0];
-      const keyword = document.getElementById('keywordInput').value.trim().toLowerCase();
+    function processFile() {
+      const fileInput = document.getElementById('fileInput');
+      const keyword = document.getElementById('keywordInput').value.toLowerCase();
+      if (!fileInput.files.length) return alert("파일을 업로드해주세요.");
+
       const reader = new FileReader();
-      const isCSV = file.name.endsWith('.csv');
+      reader.onload = function (e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        let allData = [];
+        workbook.SheetNames.forEach(name => {
+          const sheet = workbook.Sheets[name];
+          const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+          allData = allData.concat(json);
+        });
 
-      reader.onload = function(e) {
-        let rawData = [];
+        analyzeData(allData, keyword);
+      };
+      reader.readAsArrayBuffer(fileInput.files[0]);
+    }
 
-        if (isCSV) {
-          const csv = e.target.result;
-          const rows = csv.split(/\r?\n/).map(row => row.split(','));
-          rawData = rows;
-          process(rawData, keyword);
-        } else {
-          const data = new Uint8Array(e.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          workbook.SheetNames.forEach(sheet => {
-            const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { header: 1, defval: "" });
-            rawData = rawData.concat(sheetData);
-          });
-          process(rawData, keyword);
-        }
+    function analyzeData(data, keyword) {
+      const mapCol = {
+        chart: ['차트번호', '환자번호', '번호'],
+        room: ['진료실', '진료구분'],
+        type: ['초/재', '구분'],
+        date: ['진료일자', '날짜'],
+        injection: ['마취', '주사'],
+        memo: ['접수메모', '메모']
       };
 
-      if (isCSV) reader.readAsText(file);
-      else reader.readAsArrayBuffer(file);
-    });
-
-    function process(rawData, keyword) {
-      const headerRowIndex = rawData.findIndex(
-        row => row.join('').includes("초/재") || row.join('').includes("챠트번호") || row.join('').includes("진료과") || row.join('').includes("마취")
-      );
-
-      if (headerRowIndex === -1) {
-        document.getElementById('warning').innerText = '❗ 유효한 열 이름을 찾을 수 없습니다.';
-        return;
+      const columns = {};
+      const firstRow = data[0];
+      for (const key in mapCol) {
+        const match = Object.keys(firstRow).find(col => mapCol[key].some(k => col.includes(k)));
+        if (!match) return alert(`❌ 열 누락: ${key}`);
+        columns[key] = match;
       }
 
-      const headers = rawData[headerRowIndex].map(h => h.toString().trim());
-      const dataRows = rawData.slice(headerRowIndex + 1).filter(r => r.length > 1);
-      const df = dataRows.map(row => {
-        let obj = {};
-        headers.forEach((col, i) => { obj[col] = row[i] || ""; });
-        return obj;
-      });
+      const groupBy = (arr, keyFn) => arr.reduce((acc, row) => {
+        const key = keyFn(row);
+        (acc[key] = acc[key] || []).push(row);
+        return acc;
+      }, {});
 
-      const headerMap = {};
-      headers.forEach(h => {
-        const lname = h.toLowerCase();
-        if (lname.includes("초") && lname.includes("재")) headerMap['초재'] = h;
-        else if (lname.includes("차트") || lname.includes("챠트") || lname.includes("환자") || lname.includes("id")) headerMap['챠트번호'] = h;
-        else if (lname.includes("마취")) headerMap['마취'] = h;
-        else if ((lname.includes("진료") && lname.includes("과")) || lname.includes("과목")) headerMap['진료과'] = h;
-        else if (lname.includes("메모")) headerMap['접수메모'] = h;
-      });
+      const uniqueCount = (arr, key) => new Set(arr.map(x => x[key])).size;
 
-      const 필수 = ['초재', '챠트번호', '마취', '진료과'];
-      const 누락 = 필수.filter(k => !headerMap[k]);
-      if (누락.length) {
-        document.getElementById('warning').innerText = `❗ 필수 열 누락: ${누락.join(', ')}`;
-        return;
-      }
+      const rooms = [...new Set(data.map(row => row[columns.room] || ''))].sort();
+      const allRooms = ['전체', ...rooms];
 
-      const 재진조건 = ["재진", "물리치료내원", "진찰료 산정안함"];
-      const 진료실목록 = [...new Set(df.map(r => r[headerMap['진료과']] || '기타'))];
+      const results = [];
 
-      function countStats(data, 진료실) {
-        const sub = 진료실 === "전체" ? data : data.filter(r => (r[headerMap['진료과']] || '기타') === 진료실);
-        const 초진환자 = sub.filter(r => ["신환", "90일초진"].includes(r[headerMap['초재']]));
-        const 초진차트 = [...new Set(초진환자.map(r => r[headerMap['챠트번호']]))];
-        const 재진방문수 = sub.filter(r => 재진조건.includes(r[headerMap['초재']])).length;
-        const 총방문수 = sub.length;
+      allRooms.forEach(roomName => {
+        const df = roomName === '전체' ? data : data.filter(row => row[columns.room] === roomName);
+        const total = uniqueCount(df, columns.chart);
+        const first = df.filter(r => /초진|신환|90일/i.test(r[columns.type]));
+        const firstIds = [...new Set(first.map(r => r[columns.chart]))];
+        const re = df.filter(r => /재진|물리치료|산정안함/i.test(r[columns.type]));
+        const inj = df.filter(r => r[columns.injection].includes('●'));
+        const injFirst = inj.filter(r => firstIds.includes(r[columns.chart]));
+        const injFirstIds = [...new Set(injFirst.map(r => r[columns.chart]))];
 
-        const 초진주사 = 초진환자.filter(r => (r[headerMap['마취']] || '').includes('●'));
-        const 초진주사갯수 = 초진주사.length;
-        const 초진주사처방률 = 초진차트.length ? Math.round((초진주사.length / 초진차트.length) * 100) : 0;
+        const visits = groupBy(df.filter(r => injFirstIds.includes(r[columns.chart])), r => r[columns.chart]);
+        const visitCounts = Object.values(visits).map(arr => new Set(arr.map(r => r[columns.date])).size);
 
-        const 주사차트 = [...new Set(초진주사.map(r => r[headerMap['챠트번호']]))];
-        const 주사기록 = sub.filter(r => 주사차트.includes(r[headerMap['챠트번호']]));
+        const count = arr => visitCounts.filter(n => n === arr).length;
+        const countOver = n => visitCounts.filter(v => v >= n).length;
 
-        const 주사횟수 = {}, 내원횟수_주사 = {};
-        주사기록.forEach(r => {
-          const key = r[headerMap['챠트번호']];
-          if ((r[headerMap['마취']] || '').includes('●')) {
-            주사횟수[key] = (주사횟수[key] || 0) + 1;
-          }
-          내원횟수_주사[key] = (내원횟수_주사[key] || 0) + 1;
+        const keywordCount = df.filter(r => (r[columns.memo] || '').toLowerCase() === keyword).length;
+
+        results.push({
+          진료실: roomName,
+          초진: firstIds.length,
+          재진: uniqueCount(re, columns.chart),
+          총합: total,
+          '초진 주사 처방률': percent(injFirstIds.length, firstIds.length),
+          '주사환자 재진율': percent(visitCounts.filter(n => n >= 2).length, injFirstIds.length),
+          '평균주사횟수': avg(groupBy(inj, r => r[columns.chart])),
+          '주사환자 평균내원횟수': avg(groupBy(df.filter(r => injFirstIds.includes(r[columns.chart])), r => r[columns.chart])),
+          '초진평균내원횟수': avg(groupBy(df.filter(r => injFirstIds.includes(r[columns.chart])), r => r[columns.chart])),
+          '신환 재내원율': percent(visitCounts.filter(n => n > 1).length, visitCounts.length),
+          '1회 내원 비율': percent(count(1), visitCounts.length),
+          '2회 내원 비율': percent(count(2), visitCounts.length),
+          '3회 내원 비율': percent(count(3), visitCounts.length),
+          '4회 내원 비율': percent(count(4), visitCounts.length),
+          '5회 이상 내원 비율': percent(countOver(5), visitCounts.length),
+          '키워드일치 건수': keywordCount
         });
-
-        const 평균주사횟수 = Object.keys(주사횟수).length ? (Object.values(주사횟수).reduce((a, b) => a + b, 0) / Object.keys(주사횟수).length).toFixed(1) : 0;
-        const 평균내원주사 = Object.keys(내원횟수_주사).length ? (Object.values(내원횟수_주사).reduce((a, b) => a + b, 0) / Object.keys(내원횟수_주사).length).toFixed(1) : 0;
-
-        const 전체초진기록 = sub.filter(r => 초진차트.includes(r[headerMap['챠트번호']]));
-        const 초진내원 = {};
-        전체초진기록.forEach(r => {
-          const key = r[headerMap['챠트번호']];
-          초진내원[key] = (초진내원[key] || 0) + 1;
-        });
-
-        const 초진평균내원 = Object.keys(초진내원).length ? (Object.values(초진내원).reduce((a, b) => a + b, 0) / Object.keys(초진내원).length).toFixed(1) : 0;
-        const 재내원수 = Object.values(초진내원).filter(n => n >= 2).length;
-        const 초진재내원율 = Object.keys(초진내원).length ? Math.round((재내원수 / Object.keys(초진내원).length) * 100) : 0;
-
-        const 내원비율 = count => Math.round((Object.values(초진내원).filter(n => n === count).length / Object.keys(초진내원).length) * 100);
-        const 내원비율_5이상 = Math.round((Object.values(초진내원).filter(n => n >= 5).length / Object.keys(초진내원).length) * 100);
-
-        const 메모갯수 = headerMap['접수메모'] && keyword
-          ? sub.filter(r => (r[headerMap['접수메모']] || "").toLowerCase().includes(keyword)).length
-          : "";
-
-        return {
-          "구분": 진료실,
-          "초진환자수": 초진차트.length,
-          "재진환자수": 재진방문수,
-          "총환자수": 총방문수,
-          "초진 주사 처방률": `${초진주사처방률}%`,
-          "초진주사 갯수": 초진주사갯수,
-          "초진 주사환자 재진율": `${Math.round((Object.values(내원횟수_주사).filter(v => v >= 2).length / Object.keys(내원횟수_주사).length) * 100) || 0}%`,
-          "초진주사환자 평균 주사횟수": 평균주사횟수,
-          "초진 주사환자 평균내원횟수": 평균내원주사,
-          "초진평균내원횟수": 초진평균내원,
-          "초진 재내원율": `${초진재내원율}%`,
-          "1회 내원 비율": `${내원비율(1)}%`,
-          "2회 내원 비율": `${내원비율(2)}%`,
-          "3회 내원 비율": `${내원비율(3)}%`,
-          "4회 내원 비율": `${내원비율(4)}%`,
-          "5회 이상 내원 비율": `${내원비율_5이상}%`,
-          "특정 키워드 포함 메모 수": 메모갯수
-        };
-      }
-
-      const 통계 = [countStats(df, "전체")].concat(진료실목록.map(j => countStats(df, j)));
-      const keys = Object.keys(통계[0]);
-      let html = '<table><thead><tr>' + keys.map(k => `<th>${k}</th>`).join('') + '</tr></thead><tbody>';
-      통계.forEach(row => {
-        html += '<tr>' + keys.map(k => `<td>${row[k]}</td>`).join('') + '</tr>';
       });
-      html += '</tbody></table>';
-      document.getElementById('output').innerHTML = html;
+
+      renderTable(results);
+    }
+
+    function percent(n, d) {
+      return d ? Math.round((n / d) * 100) + "%" : "0%";
+    }
+
+    function avg(grouped) {
+      const sizes = Object.values(grouped).map(arr => arr.length);
+      if (!sizes.length) return 0;
+      return (sizes.reduce((a, b) => a + b, 0) / sizes.length).toFixed(1);
+    }
+
+    function renderTable(data) {
+      const output = document.getElementById("output");
+      const keys = Object.keys(data[0]);
+      let html = `<table><thead><tr>${keys.map(k => `<th>${k}</th>`).join("")}</tr></thead><tbody>`;
+      data.forEach(row => {
+        html += `<tr>${keys.map(k => `<td>${row[k]}</td>`).join("")}</tr>`;
+      });
+      html += "</tbody></table>";
+      output.innerHTML = html;
     }
   </script>
 </body>
