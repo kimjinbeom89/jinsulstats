@@ -136,7 +136,7 @@
         const 내원비율_5이상 = Math.round((Object.values(초진내원).filter(n => n >= 5).length / Object.keys(초진내원).length) * 100);
 
         const 메모갯수 = headerMap['접수메모'] && keyword
-          ? sub.filter(r => (r[headerMap['접수메모']] || "").toLowerCase().includes(keyword)).length
+          ? sub.filter(r => (r[headerMap['접수메모']] || "").toLowerCase().trim() === keyword).length
           : "";
 
         return {
